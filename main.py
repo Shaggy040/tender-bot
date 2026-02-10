@@ -1,90 +1,112 @@
-import requests
-from bs4 import BeautifulSoup
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-import json
 import os
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import json
+import time
+import gspread
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+from google.oauth2.service_account import Credentials
+
 
 SHEET_NAME = "Mumbai Port Tender Tracker"
+URL = "https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3"
 
 
-# -------- SCRAPER (NO BROWSER NOW) --------
+# ---------------- GOOGLE SHEET ----------------
+def update_sheet(tenders):
+
+    creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
+
+    creds = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ],
+    )
+
+    client = gspread.authorize(creds)
+    sheet = client.open(SHEET_NAME).sheet1
+
+    existing = sheet.get_all_values()
+    existing_numbers = [r[0] for r in existing[1:]]
+
+    added = 0
+
+    for t in tenders:
+        if t[0] not in existing_numbers:
+            sheet.append_row(t)
+            added += 1
+
+    print("New tenders added:", added)
+
+
+# ---------------- SCRAPER ----------------
 def scrape():
 
-    url = "https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3"
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
 
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    driver = webdriver.Chrome(options=chrome_options)
+    wait = WebDriverWait(driver, 20)
 
-    r = requests.get(url, headers=headers, verify=False)
-    soup = BeautifulSoup(r.text, "html.parser")
+    driver.get(URL)
 
-    table = soup.find("table")
+    wait.until(EC.presence_of_element_located((By.TAG_NAME, "table")))
 
-    rows = table.find_all("tr")[1:]
+    rows = driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
 
     tenders = []
 
-    for row in rows:
-        cols = row.find_all("td")
-        if len(cols) < 6:
-            continue
+    for i in range(len(rows)):
+        try:
+            rows = driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
+            row = rows[i]
 
-        tender_no = cols[1].text.strip()
-        desc = cols[2].text.strip()
-        date = cols[3].text.strip()
+            cols = row.find_elements(By.TAG_NAME, "td")
 
-        # details button
-        link_tag = cols[6].find("a")
-        pdf_link = ""
+            tender_no = cols[1].text
+            description = cols[2].text
+            date = cols[3].text
 
-        if link_tag:
-            detail_page = "https://mumbaiport.gov.in/" + link_tag["href"]
+            # click blue info button
+            info_btn = cols[-1].find_element(By.TAG_NAME, "a")
+            driver.execute_script("arguments[0].click();", info_btn)
 
-            detail_r = requests.get(detail_page, headers=headers, verify=False)
-            detail_soup = BeautifulSoup(detail_r.text, "html.parser")
+            # wait popup
+            wait.until(EC.visibility_of_element_located((By.CLASS_NAME, "modal-content")))
 
-            pdf = detail_soup.find("a", href=lambda x: x and "showfile.php" in x)
-            if pdf:
-                pdf_link = "https://mumbaiport.gov.in/" + pdf["href"]
+            time.sleep(1)
 
-        tenders.append([tender_no, desc, date, pdf_link])
+            # find pdf icon inside popup
+            pdf_link = driver.find_element(By.CSS_SELECTOR, "a[href*='showfile.php']").get_attribute("href")
+
+            tenders.append([tender_no, description, date, pdf_link])
+
+            print("Found:", tender_no)
+
+            # close popup
+            close_btn = driver.find_element(By.CSS_SELECTOR, ".modal-header button")
+            driver.execute_script("arguments[0].click();", close_btn)
+
+            time.sleep(1)
+
+        except Exception as e:
+            print("Skipping row:", e)
+
+    driver.quit()
 
     print("Total tenders found:", len(tenders))
     return tenders
 
 
-# -------- GOOGLE SHEET --------
-def update_sheet(tenders):
-
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
-
-    creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-
-    sheet = client.open(SHEET_NAME).sheet1
-
-    existing = sheet.get_all_values()
-    existing_tender_numbers = [row[0] for row in existing[1:]]
-
-    new_count = 0
-
-    for tender in tenders:
-        if tender[0] not in existing_tender_numbers:
-            sheet.append_row(tender)
-            new_count += 1
-
-    print("New tenders added:", new_count)
-
-
-# -------- MAIN --------
+# ---------------- MAIN ----------------
 if __name__ == "__main__":
     data = scrape()
     update_sheet(data)
