@@ -1,30 +1,49 @@
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
 import time
 import json
+import os
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-SHEET_NAME = "Mumbai Port Tenders"
 
+# ---------- CONFIG ----------
+URL = "https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3"
+SHEET_NAME = "Mumbai Port Tender Tracker"
+
+
+# ---------- START BROWSER ----------
 def start_browser():
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
 
     driver = webdriver.Chrome(options=options)
     return driver
 
 
+# ---------- SCRAPER ----------
 def scrape():
-    driver = start_browser()
-    driver.get("https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3")
-    time.sleep(5)
 
-    rows = driver.find_elements(By.XPATH, "//table//tr")[1:]
+    driver = start_browser()
+    driver.get(URL)
+
+    wait = WebDriverWait(driver, 30)
+
+    # Wait until table loads (VERY IMPORTANT)
+    table = wait.until(
+        EC.presence_of_element_located((By.XPATH, "//table"))
+    )
+
+    rows = table.find_elements(By.XPATH, ".//tr")[1:]
 
     tenders = []
 
@@ -32,57 +51,71 @@ def scrape():
         try:
             cols = row.find_elements(By.TAG_NAME, "td")
 
-            tender_no = cols[1].text
-            desc = cols[2].text
-            date = cols[3].text
+            if len(cols) < 4:
+                continue
 
-            # click info icon
+            tender_no = cols[1].text.strip()
+            description = cols[2].text.strip()
+            date = cols[3].text.strip()
+
+            # ---- Open popup ----
             detail_btn = row.find_element(By.XPATH, ".//img[contains(@src,'info')]")
+
+            driver.execute_script("arguments[0].scrollIntoView();", detail_btn)
+            time.sleep(1)
             driver.execute_script("arguments[0].click();", detail_btn)
+
+            # wait for popup links
             time.sleep(3)
 
-            # download link
             links = driver.find_elements(By.XPATH, "//a[contains(@href,'showfile.php')]")
-            file_link = links[0].get_attribute("href") if links else ""
+            pdf_link = links[0].get_attribute("href") if links else ""
 
-            tenders.append([tender_no, desc, date, file_link])
+            tenders.append([tender_no, description, date, pdf_link])
 
             # close popup
-            driver.find_element(By.XPATH, "//button[contains(text(),'×')]").click()
+            close_btn = driver.find_element(By.XPATH, "//button[contains(text(),'×')]")
+            close_btn.click()
             time.sleep(1)
 
-        except:
-            pass
+        except Exception as e:
+            print("Skipping row:", e)
+            continue
 
     driver.quit()
+    print("Total tenders found:", len(tenders))
     return tenders
 
 
+# ---------- GOOGLE SHEETS ----------
 def update_sheet(tenders):
+
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive"
     ]
 
-    import os
-    import json
-
     creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
-
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
 
-    sheet = client.open("Mumbai Port Tender Tracker").sheet1
+    sheet = client.open(SHEET_NAME).sheet1
 
     existing = sheet.get_all_values()
     existing_tenders = [row[0] for row in existing[1:]]
+
+    new_added = 0
 
     for tender in tenders:
         if tender[0] not in existing_tenders:
             sheet.append_row(tender)
             print("Added:", tender[0])
+            new_added += 1
+
+    print("New tenders added:", new_added)
 
 
+# ---------- MAIN ----------
 if __name__ == "__main__":
     data = scrape()
     update_sheet(data)
