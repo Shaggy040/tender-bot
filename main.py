@@ -1,85 +1,84 @@
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
 import time
 import json
-import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
+SHEET_NAME = "Mumbai Port Tenders"
 
-URL = "https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3"
-
-# ---------------- GOOGLE SHEET ----------------
-def connect_sheet():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
-    return client.open("Mumbai Port Tender Tracker").sheet1
-
-# ---------------- BROWSER ----------------
 def start_browser():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
 
-    return webdriver.Chrome(options=chrome_options)
+    driver = webdriver.Chrome(options=options)
+    return driver
 
-# ---------------- SCRAPER ----------------
+
 def scrape():
-    print("Opening browser...")
     driver = start_browser()
-    driver.get(URL)
+    driver.get("https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3")
     time.sleep(5)
-
-    sheet = connect_sheet()
 
     rows = driver.find_elements(By.XPATH, "//table//tr")[1:]
 
-    for i, row in enumerate(rows):
-        try:
-            tender_no = row.find_element(By.XPATH, "./td[2]").text
-            description = row.find_element(By.XPATH, "./td[3]").text
-            date = row.find_element(By.XPATH, "./td[4]").text
+    tenders = []
 
-            # click info button
-            info_button = row.find_element(By.XPATH, ".//td[last()]//a")
-            driver.execute_script("arguments[0].click();", info_button)
+    for row in rows:
+        try:
+            cols = row.find_elements(By.TAG_NAME, "td")
+
+            tender_no = cols[1].text
+            desc = cols[2].text
+            date = cols[3].text
+
+            # click info icon
+            detail_btn = row.find_element(By.XPATH, ".//img[contains(@src,'info')]")
+            driver.execute_script("arguments[0].click();", detail_btn)
             time.sleep(3)
 
-            # click document icon
-            doc_icon = driver.find_element(By.XPATH, "//img[contains(@src,'pdf')]")
-            driver.execute_script("arguments[0].click();", doc_icon)
-            time.sleep(4)
+            # download link
+            links = driver.find_elements(By.XPATH, "//a[contains(@href,'showfile.php')]")
+            file_link = links[0].get_attribute("href") if links else ""
 
-            # capture PDF link
-            handles = driver.window_handles
-            driver.switch_to.window(handles[-1])
-            pdf_link = driver.current_url
-            driver.close()
-            driver.switch_to.window(handles[0])
-
-            # write to sheet
-            sheet.append_row([tender_no, description, date, pdf_link])
-            print("Saved:", tender_no)
+            tenders.append([tender_no, desc, date, file_link])
 
             # close popup
-            close = driver.find_element(By.XPATH, "//div[contains(@class,'ui-dialog-titlebar-close')]")
-            driver.execute_script("arguments[0].click();", close)
+            driver.find_element(By.XPATH, "//button[contains(text(),'×')]").click()
+            time.sleep(1)
 
-            time.sleep(2)
-
-        except Exception as e:
-            print("Skip row:", e)
+        except:
+            pass
 
     driver.quit()
+    return tenders
+
+
+def update_sheet(tenders):
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
+
+    creds_dict = json.loads(open("creds.json").read())
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+
+    sheet = client.open(SHEET_NAME).sheet1
+
+    existing = sheet.get_all_values()
+    existing_tenders = [row[0] for row in existing[1:]]
+
+    for tender in tenders:
+        if tender[0] not in existing_tenders:
+            sheet.append_row(tender)
+            print("Added:", tender[0])
+
 
 if __name__ == "__main__":
-    scrape()
+    data = scrape()
+    update_sheet(data)
