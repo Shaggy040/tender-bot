@@ -4,6 +4,8 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 import os
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 SHEET_NAME = "Mumbai Port Tender Tracker"
 
@@ -17,7 +19,7 @@ def scrape():
         "User-Agent": "Mozilla/5.0"
     }
 
-    r = requests.get(url, headers=headers)
+    r = requests.get(url, headers=headers, verify=False)
     soup = BeautifulSoup(r.text, "html.parser")
 
     table = soup.find("table")
@@ -42,7 +44,7 @@ def scrape():
         if link_tag:
             detail_page = "https://mumbaiport.gov.in/" + link_tag["href"]
 
-            detail_r = requests.get(detail_page, headers=headers)
+            detail_r = requests.get(detail_page, headers=headers, verify=False)
             detail_soup = BeautifulSoup(detail_r.text, "html.parser")
 
             pdf = detail_soup.find("a", href=lambda x: x and "showfile.php" in x)
