@@ -5,6 +5,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 import time
 import os
 import json
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = "https://mumbaiport.gov.in/"
 URL = "https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3"
@@ -27,7 +29,7 @@ def scrape():
     existing = sheet.col_values(1)
 
     headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(URL, headers=headers, timeout=30)
+    res = requests.get(URL, headers=headers, timeout=30, verify=False)
 
     soup = BeautifulSoup(res.text, "html.parser")
     table = soup.find("table")
