@@ -3,21 +3,17 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-
 import time
-import json
 import os
-
+import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 
-# ---------- CONFIG ----------
-URL = "https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3"
 SHEET_NAME = "Mumbai Port Tender Tracker"
 
 
-# ---------- START BROWSER ----------
+# ---------- BROWSER ----------
 def start_browser():
     options = Options()
     options.add_argument("--headless=new")
@@ -34,55 +30,51 @@ def start_browser():
 def scrape():
 
     driver = start_browser()
-    driver.get(URL)
+    wait = WebDriverWait(driver, 20)
 
-    wait = WebDriverWait(driver, 30)
+    driver.get("https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3")
 
-    # Wait until table loads (VERY IMPORTANT)
-    table = wait.until(
-        EC.presence_of_element_located((By.XPATH, "//table"))
-    )
+    # wait for table
+    wait.until(EC.presence_of_element_located((By.XPATH, "//table")))
 
-    rows = table.find_elements(By.XPATH, ".//tr")[1:]
+    rows = driver.find_elements(By.XPATH, "//table//tr")[1:]
 
     tenders = []
 
     for row in rows:
         try:
             cols = row.find_elements(By.TAG_NAME, "td")
-
-            if len(cols) < 4:
+            if len(cols) < 6:
                 continue
 
             tender_no = cols[1].text.strip()
-            description = cols[2].text.strip()
+            desc = cols[2].text.strip()
             date = cols[3].text.strip()
 
-            # ---- Open popup ----
-            detail_btn = row.find_element(By.XPATH, ".//img[contains(@src,'info')]")
-
-            driver.execute_script("arguments[0].scrollIntoView();", detail_btn)
-            time.sleep(1)
+            # click DETAILS button (blue info icon)
+            detail_btn = row.find_element(By.XPATH, ".//a[contains(@class,'btn-info')]")
             driver.execute_script("arguments[0].click();", detail_btn)
 
-            # wait for popup links
-            time.sleep(3)
+            # wait for popup PDF link
+            wait.until(
+                EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'showfile.php')]"))
+            )
 
             links = driver.find_elements(By.XPATH, "//a[contains(@href,'showfile.php')]")
-            pdf_link = links[0].get_attribute("href") if links else ""
+            file_link = links[0].get_attribute("href") if links else ""
 
-            tenders.append([tender_no, description, date, pdf_link])
+            tenders.append([tender_no, desc, date, file_link])
 
             # close popup
-            close_btn = driver.find_element(By.XPATH, "//button[contains(text(),'×')]")
-            close_btn.click()
+            close_btn = driver.find_element(By.XPATH, "//button[@class='close']")
+            driver.execute_script("arguments[0].click();", close_btn)
             time.sleep(1)
 
         except Exception as e:
-            print("Skipping row:", e)
-            continue
+            print("Skipped row:", e)
 
     driver.quit()
+
     print("Total tenders found:", len(tenders))
     return tenders
 
@@ -102,17 +94,16 @@ def update_sheet(tenders):
     sheet = client.open(SHEET_NAME).sheet1
 
     existing = sheet.get_all_values()
-    existing_tenders = [row[0] for row in existing[1:]]
+    existing_tender_numbers = [row[0] for row in existing[1:]]
 
-    new_added = 0
+    new_count = 0
 
     for tender in tenders:
-        if tender[0] not in existing_tenders:
+        if tender[0] not in existing_tender_numbers:
             sheet.append_row(tender)
-            print("Added:", tender[0])
-            new_added += 1
+            new_count += 1
 
-    print("New tenders added:", new_added)
+    print("New tenders added:", new_count)
 
 
 # ---------- MAIN ----------
