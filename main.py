@@ -64,7 +64,11 @@ def update_sheet(tenders):
         "https://www.googleapis.com/auth/drive"
     ]
 
-    creds_dict = json.loads(open("creds.json").read())
+    import os
+    import json
+
+    creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
+
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
 
