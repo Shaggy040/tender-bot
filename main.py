@@ -72,7 +72,7 @@ def update_sheet(tenders):
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
 
-    sheet = client.open(Mumbai Port Tender Tracker).sheet1
+    sheet = client.open("Mumbai Port Tender Tracker").sheet1
 
     existing = sheet.get_all_values()
     existing_tenders = [row[0] for row in existing[1:]]
