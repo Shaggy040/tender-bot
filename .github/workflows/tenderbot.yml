@@ -2,33 +2,33 @@ name: Tender Bot
 
 on:
   schedule:
-    - cron: '0 * * * *'   # runs every 1 hour
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 jobs:
-  run-bot:
+  scrape:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v3
-
-      - name: Install Chrome
-        run: |
-          sudo apt update
-          sudo apt install -y chromium-browser
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
 
-      - name: Create creds.json
+      - name: Install Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser chromium-chromedriver
+
+      - name: Create credentials
         run: echo '${{ secrets.GOOGLE_CREDS }}' > creds.json
 
-      - name: Run scraper
+      - name: Run bot
         run: python main.py
