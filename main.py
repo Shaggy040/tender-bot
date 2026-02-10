@@ -1,85 +1,61 @@
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-import time
-import os
-import json
+import requests
+from bs4 import BeautifulSoup
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-
+import json
+import os
 
 SHEET_NAME = "Mumbai Port Tender Tracker"
 
 
-# ---------- BROWSER ----------
-def start_browser():
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-
-    driver = webdriver.Chrome(options=options)
-    return driver
-
-
-# ---------- SCRAPER ----------
+# -------- SCRAPER (NO BROWSER NOW) --------
 def scrape():
 
-    driver = start_browser()
-    wait = WebDriverWait(driver, 20)
+    url = "https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3"
 
-    driver.get("https://mumbaiport.gov.in/show_tenders.php?lang=1&depid=1&catid=3")
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
 
-    # wait for table
-    wait.until(EC.presence_of_element_located((By.XPATH, "//table")))
+    r = requests.get(url, headers=headers)
+    soup = BeautifulSoup(r.text, "html.parser")
 
-    rows = driver.find_elements(By.XPATH, "//table//tr")[1:]
+    table = soup.find("table")
+
+    rows = table.find_all("tr")[1:]
 
     tenders = []
 
     for row in rows:
-        try:
-            cols = row.find_elements(By.TAG_NAME, "td")
-            if len(cols) < 6:
-                continue
+        cols = row.find_all("td")
+        if len(cols) < 6:
+            continue
 
-            tender_no = cols[1].text.strip()
-            desc = cols[2].text.strip()
-            date = cols[3].text.strip()
+        tender_no = cols[1].text.strip()
+        desc = cols[2].text.strip()
+        date = cols[3].text.strip()
 
-            # click DETAILS button (blue info icon)
-            detail_btn = row.find_element(By.XPATH, ".//a[contains(@class,'btn-info')]")
-            driver.execute_script("arguments[0].click();", detail_btn)
+        # details button
+        link_tag = cols[6].find("a")
+        pdf_link = ""
 
-            # wait for popup PDF link
-            wait.until(
-                EC.presence_of_element_located((By.XPATH, "//a[contains(@href,'showfile.php')]"))
-            )
+        if link_tag:
+            detail_page = "https://mumbaiport.gov.in/" + link_tag["href"]
 
-            links = driver.find_elements(By.XPATH, "//a[contains(@href,'showfile.php')]")
-            file_link = links[0].get_attribute("href") if links else ""
+            detail_r = requests.get(detail_page, headers=headers)
+            detail_soup = BeautifulSoup(detail_r.text, "html.parser")
 
-            tenders.append([tender_no, desc, date, file_link])
+            pdf = detail_soup.find("a", href=lambda x: x and "showfile.php" in x)
+            if pdf:
+                pdf_link = "https://mumbaiport.gov.in/" + pdf["href"]
 
-            # close popup
-            close_btn = driver.find_element(By.XPATH, "//button[@class='close']")
-            driver.execute_script("arguments[0].click();", close_btn)
-            time.sleep(1)
-
-        except Exception as e:
-            print("Skipped row:", e)
-
-    driver.quit()
+        tenders.append([tender_no, desc, date, pdf_link])
 
     print("Total tenders found:", len(tenders))
     return tenders
 
 
-# ---------- GOOGLE SHEETS ----------
+# -------- GOOGLE SHEET --------
 def update_sheet(tenders):
 
     scope = [
@@ -106,7 +82,7 @@ def update_sheet(tenders):
     print("New tenders added:", new_count)
 
 
-# ---------- MAIN ----------
+# -------- MAIN --------
 if __name__ == "__main__":
     data = scrape()
     update_sheet(data)
